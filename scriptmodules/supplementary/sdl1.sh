@@ -12,8 +12,8 @@
 rp_module_id="sdl1"
 rp_module_desc="SDL 1.2.15 with rpi fixes and dispmanx"
 rp_module_licence="GPL2 https://hg.libsdl.org/SDL/raw-file/7676476631ce/COPYING"
-rp_module_section=""
-rp_module_flags="!mali !x86 !kms"
+rp_module_section="depends"
+rp_module_flags="!all rpi"
 
 function get_pkg_ver_sdl1() {
     local basever
@@ -62,7 +62,7 @@ function sources_sdl1() {
 function build_sdl1() {
     cd libsdl1.2-$(get_pkg_ver_sdl1 base)
     dpkg-buildpackage
-    local dest="$__tmpdir/archives/$__os_codename/$__platform"
+    local dest="$__tmpdir/archives/$__binary_path"
     mkdir -p "$dest"
     cp ../*.deb "$dest/"
 }
@@ -70,16 +70,17 @@ function build_sdl1() {
 function install_sdl1() {
     # if the packages don't install completely due to missing dependencies the apt-get -y -f install will correct it
     if ! dpkg -i libsdl1.2debian_$(get_pkg_ver_sdl1)_armhf.deb libsdl1.2-dev_$(get_pkg_ver_sdl1)_armhf.deb; then
-        apt-get -y -f install
+        apt-get -y -f --no-install-recommends install
     fi
     echo "libsdl1.2-dev hold" | dpkg --set-selections
 }
 
+
+function __binary_url_sdl1() {
+    rp_hasBinaries && echo "$__binary_url/libsdl1.2debian_$(get_pkg_ver_sdl1)_armhf.deb"
+}
+
 function install_bin_sdl1() {
-    if ! isPlatform "rpi"; then
-        md_ret_errors+=("$md_id is only available as a binary package for platform rpi")
-        return 1
-    fi
     wget "$__binary_url/libsdl1.2debian_$(get_pkg_ver_sdl1)_armhf.deb"
     wget "$__binary_url/libsdl1.2-dev_$(get_pkg_ver_sdl1)_armhf.deb"
     install_sdl1
