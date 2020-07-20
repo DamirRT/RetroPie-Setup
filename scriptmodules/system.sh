@@ -38,6 +38,9 @@ function test_chroot() {
     if [[ "$(stat -c %d:%i /)" != "$(stat -c %d:%i /proc/1/root/.)" ]]; then
         [[ -z "$QEMU_CPU" && -n "$__qemu_cpu" ]] && export QEMU_CPU=$__qemu_cpu
         __chroot=1
+    # detect the usage of systemd-nspawn
+    elif [[ -n "$(systemd-detect-virt)" && "$(systemd-detect-virt)" == "systemd-nspawn" ]]; then
+        __chroot=1
     else
         __chroot=0
     fi
@@ -46,7 +49,7 @@ function test_chroot() {
 
 function conf_memory_vars() {
     __memory_total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
-    __memory_total=$(( "$__memory_total_kb" / 1024 ))
+    __memory_total=$(( __memory_total_kb / 1024 ))
     if grep -q "^MemAvailable:" /proc/meminfo; then
         __memory_avail_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
     else
@@ -55,7 +58,7 @@ function conf_memory_vars() {
         local mem_buffers=$(awk '/^Buffers:/{print $2}' /proc/meminfo)
         __memory_avail_kb=$((mem_free + mem_cached + mem_buffers))
     fi
-    __memory_avail=$(( "$__memory_avail_kb" / 1024 ))
+    __memory_avail=$(( __memory_avail_kb / 1024 ))
 }
 
 function conf_binary_vars() {
@@ -77,12 +80,18 @@ function conf_build_vars() {
 
     # calculate build concurrency based on cores and available memory
     __jobs=1
+    local unit=512
+    isPlatform "64bit" && unit=$(($unit + 256))
     if [[ "$(nproc)" -gt 1 ]]; then
-        # if we have less than 1gb of ram free, then limit build jobs to 2
-        if [[ "$__memory_avail" -lt 1024 ]]; then
-           __jobs=2
-        else
-           __jobs=$(nproc)
+        local nproc="$(nproc)"
+        # max one thread per unit (MB) of ram
+        local max_jobs=$(($__memory_avail / $unit))
+        if [[ "$max_jobs" -gt 0 ]]; then
+            if [[ "$max_jobs" -lt "$nproc" ]]; then
+                __jobs="$max_jobs"
+            else
+                __jobs="$nproc"
+            fi
         fi
     fi
     __default_makeflags="-j${__jobs}"
@@ -90,8 +99,6 @@ function conf_build_vars() {
     # set our default gcc optimisation level
     if [[ -z "$__opt_flags" ]]; then
         __opt_flags="$__default_opt_flags"
-        # -pipe is faster but will use more memory - so let's only add it if we have at least 512MB ram.
-        [[ "$__memory_avail" -ge 512 ]] && __opt_flags+=" -pipe"
     fi
 
     # set default cpu flags
@@ -112,7 +119,7 @@ function conf_build_vars() {
 
     # workaround for GCC ABI incompatibility with threaded armv7+ C++ apps built
     # on Raspbian's armv6 userland https://github.com/raspberrypi/firmware/issues/491
-    if [[ "$__os_id" == "Raspbian" ]] && compareVersions $__gcc_version lt 5.0.0; then
+    if [[ "$__os_id" == "Raspbian" ]] && compareVersions $__gcc_version lt 5; then
         __cxxflags+=" -U__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2"
     fi
 
@@ -195,30 +202,35 @@ function get_os_version() {
                     ;;
             esac
             ;;
-        LinuxMint)
+        LinuxMint|Linuxmint)
             if [[ "$__os_desc" != LMDE* ]]; then
                 if compareVersions "$__os_release" lt 18; then
                     error="You need Linux Mint 18 or newer"
                 elif compareVersions "$__os_release" lt 19; then
                     __os_ubuntu_ver="16.04"
-                    __os_debian_ver="9"
-                else
+                    __os_debian_ver="8"
+                elif compareVersions "$__os_release" lt 20; then
                     __os_ubuntu_ver="18.04"
                     __os_debian_ver="10"
+                else
+                    __os_ubuntu_ver="20.04"
+                    __os_debian_ver="11"
                 fi
             fi
             ;;
-        Ubuntu|neon)
+        Ubuntu|neon|Pop)
             if compareVersions "$__os_release" lt 16.04; then
                 error="You need Ubuntu 16.04 or newer"
-            # although ubuntu 16.10 reports as being based on stretch it is before some
+            # although ubuntu 16.04/16.10 report as being based on stretch it is before some
             # packages were changed - we map to version 8 to avoid issues (eg libpng-dev name)
-            elif compareVersions "$__os_release" eq 16.10; then
+            elif compareVersions "$__os_release" le 16.10; then
                 __os_debian_ver="8"
             elif compareVersions "$__os_release" lt 18.04; then
                 __os_debian_ver="9"
-            else
+            elif compareVersions "$__os_release" lt 20.04; then
                 __os_debian_ver="10"
+            else
+                __os_debian_ver="11"
             fi
             __os_ubuntu_ver="$__os_release"
             ;;
